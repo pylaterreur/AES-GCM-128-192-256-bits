@@ -14,7 +14,11 @@ use work.gcm_pkg.all;
 --------------------------------------------------------------------------------
 entity gcm_ghash is
     generic(
-        aes_gcm_split_gfmul         : natural range 0 to 1 := 0);
+        aes_gcm_split_gfmul         : natural range 0 to 1 := 0;
+        --! Extra pipeline stages before GFMUL for timing closure on slow FPGAs
+        --! 0 = no extra pipeline (default, for fast FPGAs like UltraScale)
+        --! 1-3 = add N pipeline stages (for routing-constrained FPGAs like Artix-7)
+        aes_gcm_ghash_extra_pipe    : natural range 0 to 3 := 0);
     port(
         rst_i                       : in  std_logic;
         clk_i                       : in  std_logic;
@@ -42,9 +46,16 @@ architecture arch_gcm_ghash of gcm_ghash is
     constant ZERO_C : std_logic_vector(63 downto 0) := (others => '0');
 
     --! Types
-
+    --! Shift register array type for configurable pipeline depth
+    type gf_pipe_array_t is array (natural range <>) of
+        std_logic_vector(GCM_DATA_WIDTH_C-1 downto 0);
 
     --! Signals
+    --! Pipeline registers for GFMUL input (when aes_gcm_ghash_extra_pipe > 0)
+    signal gf_x_pipe        : gf_pipe_array_t(0 to 2);  -- Max 3 stages
+    signal y_val_pipe       : std_logic_vector(2 downto 0);  -- Valid delay line
+    signal gf_x_mux         : std_logic_vector(GCM_DATA_WIDTH_C-1 downto 0);
+    signal y_val_mux        : std_logic;
     signal h_q                  : std_logic_vector(GCM_DATA_WIDTH_C-1 downto 0);
     signal J0_q                 : std_logic_vector(GCM_DATA_WIDTH_C-1 downto 0);
     signal gf_x                 : std_logic_vector(GCM_DATA_WIDTH_C-1 downto 0);
@@ -168,6 +179,10 @@ begin
         end if;
     end process;
 
+    --! J0 loads from the second AES output (counter=1), after H (counter=0).
+    --! Note: J0 is only needed at packet END for tag computation (ghash_tag = y_q XOR J0_q).
+    --! The gctr_ready signal in gcm_gctr.vhd no longer waits for j0_loaded,
+    --! allowing ciphertext decryption to start ~16 cycles earlier.
     load_j0 <= not(j0_loaded_q) and aes_ecb_val_i and h_loaded_q;
 
     --------------------------------------------------------------------------------
@@ -179,7 +194,8 @@ begin
             y_q <= (others => '0');
         elsif(rising_edge(clk_i)) then
             --! Save Y to xor with the next incoming X value
-            if(y_val = '1') then
+            --! When pipelined, use delayed valid signal to match data timing
+            if(y_val_mux = '1') then
                 y_q <= gf_y;
             end if;
         end if;
@@ -327,6 +343,43 @@ begin
     end process;
 
     --------------------------------------------------------------------------------
+    --! Optional GFMUL input pipeline for timing closure
+    --! When aes_gcm_ghash_extra_pipe > 0, inserts N pipeline stages before GFMUL
+    --! to break the critical path: gctr_data_out -> gf_x (XOR) -> gfmul -> gf_y
+    --! This adds N clock cycles of latency but helps achieve timing on slow FPGAs
+    --------------------------------------------------------------------------------
+    gfmul_input_pipe_p : process(rst_i, clk_i)
+    begin
+        if(rst_i = '1') then
+            gf_x_pipe   <= (others => (others => '0'));
+            y_val_pipe  <= (others => '0');
+        elsif(rising_edge(clk_i)) then
+            --! Shift register: stage 0 gets new data, others shift
+            gf_x_pipe(0)  <= gf_x;
+            y_val_pipe(0) <= y_val;
+            for i in 1 to 2 loop
+                gf_x_pipe(i)  <= gf_x_pipe(i-1);
+                y_val_pipe(i) <= y_val_pipe(i-1);
+            end loop;
+        end if;
+    end process;
+
+    --! Select GFMUL input based on pipeline depth setting
+    --! aes_gcm_ghash_extra_pipe = 0: bypass (no latency)
+    --! aes_gcm_ghash_extra_pipe = 1: 1 cycle delay
+    --! aes_gcm_ghash_extra_pipe = 2: 2 cycle delay
+    --! aes_gcm_ghash_extra_pipe = 3: 3 cycle delay
+    gf_x_mux <= gf_x           when (aes_gcm_ghash_extra_pipe = 0) else
+                gf_x_pipe(0)   when (aes_gcm_ghash_extra_pipe = 1) else
+                gf_x_pipe(1)   when (aes_gcm_ghash_extra_pipe = 2) else
+                gf_x_pipe(2);  -- aes_gcm_ghash_extra_pipe = 3
+
+    y_val_mux <= y_val         when (aes_gcm_ghash_extra_pipe = 0) else
+                 y_val_pipe(0) when (aes_gcm_ghash_extra_pipe = 1) else
+                 y_val_pipe(1) when (aes_gcm_ghash_extra_pipe = 2) else
+                 y_val_pipe(2);  -- aes_gcm_ghash_extra_pipe = 3
+
+    --------------------------------------------------------------------------------
     --! Component instantiation. Generate a single or double gfmul.
     --!   The double gfmul instantiation has better timings but bigger area
     --------------------------------------------------------------------------------
@@ -343,8 +396,8 @@ begin
                 gf_mult_x_i => x_part_1,
                 gf_mult_y_o => y_part_1);
 
-        x_part_0 <= ZERO_C & gf_x(63 downto 0);
-        x_part_1 <= gf_x(127 downto 64) & ZERO_C;
+        x_part_0 <= ZERO_C & gf_x_mux(63 downto 0);
+        x_part_1 <= gf_x_mux(127 downto 64) & ZERO_C;
         y_part   <= y_part_1 xor y_part_0;
     end generate gen_multi_gfmul;
 
@@ -352,7 +405,7 @@ begin
         u_ghash_gfmul: ghash_gfmul
             port map(
                 gf_mult_h_i => h_q,
-                gf_mult_x_i => gf_x,
+                gf_mult_x_i => gf_x_mux,
                 gf_mult_y_o => gf_y_whole);
     end generate gen_single_gfmul;
 

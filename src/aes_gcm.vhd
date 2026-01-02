@@ -17,7 +17,9 @@ entity aes_gcm is
     generic(
         aes_gcm_mode_g              : std_logic_vector(1 downto 0)  := AES_MODE_128_C;
         aes_gcm_n_rounds_g          : natural range 0 to NR_256_C   := NR_128_C;
-        aes_gcm_split_gfmul         : natural range 0 to 1          := 0);
+        aes_gcm_split_gfmul         : natural range 0 to 1          := 0;
+        --! Extra pipeline stages before GFMUL for timing closure on slow FPGAs
+        aes_gcm_ghash_extra_pipe    : natural range 0 to 3          := 0);
     port(
         rst_i                       : in  std_logic;
         clk_i                       : in  std_logic;
@@ -98,7 +100,8 @@ architecture arch_aes_gcm of aes_gcm is
 
     component gcm_ghash is
         generic(
-            aes_gcm_split_gfmul         : natural range 0 to 1 := 0);
+            aes_gcm_split_gfmul         : natural range 0 to 1 := 0;
+            aes_gcm_ghash_extra_pipe    : natural range 0 to 3 := 0);
         port(
             rst_i                       : in  std_logic;
             clk_i                       : in  std_logic;
@@ -167,7 +170,8 @@ begin
 
     u_gcm_ghash: gcm_ghash
         generic map(
-            aes_gcm_split_gfmul         => aes_gcm_split_gfmul
+            aes_gcm_split_gfmul         => aes_gcm_split_gfmul,
+            aes_gcm_ghash_extra_pipe    => aes_gcm_ghash_extra_pipe
         )
         port map(
             rst_i                       => rst_i,

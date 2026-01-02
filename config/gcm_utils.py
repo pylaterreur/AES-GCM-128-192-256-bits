@@ -69,6 +69,13 @@ class aes_conf(object):
                             type=int, default=1, metavar='GFMUL', choices=range(1,3),
                             help='Specify 1 (default) or 2 GFMUL IP in the GHASH block.')
 
+        self.parser.add_argument('--ghash-pipe',
+                            type=int, default=0, metavar='N', choices=range(0, 4),
+                            help='Add N extra pipeline stages (0-3) before GHASH GFMUL for timing closure.\
+                            \n0 = no extra pipeline (default, for fast FPGAs like UltraScale)\
+                            \n1-3 = add N pipeline stages (for routing-constrained FPGAs like Artix-7)\
+                            \nEach stage adds 1 clock cycle latency but helps meet timing.')
+
 
         if self.config_ip_only == True:
             return
@@ -206,10 +213,11 @@ class aes_conf(object):
         else:
             seed = None
 
-        self.set_default_value( self.args.size   , seed , 'aes_size'      , 'XS'  )
-        self.set_default_value( self.args.mode   , seed , 'aes_mode'      , '128' )
-        self.set_default_value( self.args.pipe   , seed , 'pipes_in_core' , 0     )
-        self.set_default_value( self.args.ngfmul , seed , 'n_gfmul_ip'    , 1     )
+        self.set_default_value( self.args.size   , seed , 'aes_size'       , 'XS'  )
+        self.set_default_value( self.args.mode   , seed , 'aes_mode'       , '128' )
+        self.set_default_value( self.args.pipe   , seed , 'pipes_in_core'  , 0     )
+        self.set_default_value( self.args.ngfmul , seed , 'n_gfmul_ip'     , 1     )
+        self.set_default_value( self.args.ghash_pipe, seed, 'ghash_extra_pipe', 0  )
 
 
         if self.conf_param['aes_size'] == 'XS':
@@ -293,6 +301,7 @@ class aes_conf(object):
                           self.conf_param['n_rounds'],
                           self.conf_param['pipes_in_core'],
                           self.conf_param['n_gfmul_ip']-1,
+                          self.conf_param['ghash_extra_pipe'],
                           gen_rtl_path)
 
     # ======================================================================================

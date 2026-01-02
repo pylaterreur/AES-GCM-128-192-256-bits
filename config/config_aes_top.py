@@ -1,6 +1,6 @@
 import sys
 
-def generate_aes_top(aes_mode='128', aes_n_rounds=1, pipe_stage=0, aes_gcm_split_gfmul=0, filepath='./'):
+def generate_aes_top(aes_mode='128', aes_n_rounds=1, pipe_stage=0, aes_gcm_split_gfmul=0, aes_gcm_ghash_extra_pipe=0, filepath='./'):
     filename = filepath + 'top_aes_gcm.vhd'
 
     file_lines = []
@@ -18,10 +18,11 @@ use work.gcm_pkg.all;
 use work.aes_pkg.all;
 
 -- This IP has been configured with:
---   AES Mode:    ''' + aes_mode + '''
---   # rounds:    ''' + str(aes_n_rounds) + '''
---   pipe stages: ''' + str(pipe_stage) + '''
---   gfmul IP:    ''' + str(aes_gcm_split_gfmul + 1)+ '''
+--   AES Mode:         ''' + aes_mode + '''
+--   # rounds:         ''' + str(aes_n_rounds) + '''
+--   pipe stages:      ''' + str(pipe_stage) + '''
+--   gfmul IP:         ''' + str(aes_gcm_split_gfmul + 1)+ '''
+--   ghash extra pipe: ''' + str(aes_gcm_ghash_extra_pipe) + ''' (0=off, 1-3=timing closure)
 
 --------------------------------------------------------------------------------
 entity top_aes_gcm is
@@ -58,7 +59,8 @@ architecture arch_top_aes_gcm of top_aes_gcm is
         generic(
             aes_gcm_mode_g                  : std_logic_vector(1 downto 0)  := AES_MODE_128_C;
             aes_gcm_n_rounds_g              : natural range 0 to NR_256_C   := NR_128_C;
-            aes_gcm_split_gfmul             : natural range 0 to 1          := 0);
+            aes_gcm_split_gfmul             : natural range 0 to 1          := 0;
+            aes_gcm_ghash_extra_pipe        : natural range 0 to 3          := 0);
         port(
             rst_i                           : in  std_logic;
             clk_i                           : in  std_logic;
@@ -91,7 +93,8 @@ begin
         generic map(
             aes_gcm_mode_g                  => AES_MODE_''' + aes_mode + '''_C,
             aes_gcm_n_rounds_g              => ''' + str(aes_n_rounds) + ''',
-            aes_gcm_split_gfmul             => ''' + str(aes_gcm_split_gfmul) + ''')
+            aes_gcm_split_gfmul             => ''' + str(aes_gcm_split_gfmul) + ''',
+            aes_gcm_ghash_extra_pipe        => ''' + str(aes_gcm_ghash_extra_pipe) + ''')
         port map(
             rst_i                           => rst_i,
             clk_i                           => clk_i,
